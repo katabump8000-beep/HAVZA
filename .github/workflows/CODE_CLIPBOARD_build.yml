@@ -201,7 +201,7 @@ jobs:
                   }, weightParams())
                   actions.addView(actionButton("ABC") {
                       (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                          .switchToNextInputMethod(window?.window?.windowToken, false)
+                          .switchToNextInputMethod(false)
                   }, weightParams())
                   root.addView(actions)
 
