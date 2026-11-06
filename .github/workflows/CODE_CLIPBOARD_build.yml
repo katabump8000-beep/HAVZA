@@ -201,7 +201,7 @@ jobs:
                   }, weightParams())
                   actions.addView(actionButton("ABC") {
                       (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-                          .switchToNextInputMethod(false)
+                          .showInputMethodPicker()
                   }, weightParams())
                   root.addView(actions)
 
