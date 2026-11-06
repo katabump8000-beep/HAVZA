@@ -1,0 +1,315 @@
+name: Build CODE CLIPBOARD APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate project and build APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter create --platforms=android --org com.codeclipboard --project-name code_clipboard code_clipboard
+          cd code_clipboard
+
+          cat > lib/main.dart <<'DART'
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+
+          void main() => runApp(const CodeClipboardApp());
+
+          class CodeClipboardApp extends StatelessWidget {
+            const CodeClipboardApp({super.key});
+            @override
+            Widget build(BuildContext context) => MaterialApp(
+              debugShowCheckedModeBanner: false,
+              title: 'CODE CLIPBOARD',
+              theme: ThemeData(
+                brightness: Brightness.dark,
+                scaffoldBackgroundColor: const Color(0xFF090D14),
+                colorScheme: ColorScheme.fromSeed(
+                  seedColor: const Color(0xFF3D8BFF),
+                  brightness: Brightness.dark,
+                ),
+                useMaterial3: true,
+              ),
+              home: const HomePage(),
+            );
+          }
+
+          class HomePage extends StatelessWidget {
+            const HomePage({super.key});
+            static const platform = MethodChannel('code_clipboard/system');
+
+            Future<void> call(String method) async {
+              try { await platform.invokeMethod(method); }
+              on PlatformException catch (e) { debugPrint(e.message); }
+            }
+
+            @override
+            Widget build(BuildContext context) => Scaffold(
+              appBar: AppBar(title: const Text('CODE CLIPBOARD')),
+              body: Padding(
+                padding: const EdgeInsets.all(22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const SizedBox(height: 24),
+                    const Icon(Icons.content_paste_go_rounded,
+                        size: 76, color: Color(0xFF58A6FF)),
+                    const SizedBox(height: 18),
+                    const Text('حافظتك البرمجية',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 25, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'فعّل لوحة CODE CLIPBOARD من إعدادات أندرويد، '
+                      'ثم اخترها من قائمة لوحات المفاتيح.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white70, height: 1.6)),
+                    const SizedBox(height: 30),
+                    FilledButton.icon(
+                      onPressed: () => call('openImeSettings'),
+                      icon: const Icon(Icons.settings),
+                      label: const Text('فتح إعدادات لوحات المفاتيح')),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () => call('showImePicker'),
+                      icon: const Icon(Icons.keyboard_alt_outlined),
+                      label: const Text('اختيار لوحة CODE CLIPBOARD')),
+                    const Spacer(),
+                    const Text(
+                      'قد يقيّد أندرويد قراءة الحافظة في بعض التطبيقات. '
+                      'يُحفظ السجل محلياً على الجهاز.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white38, fontSize: 12)),
+                  ],
+                ),
+              ),
+            );
+          }
+          DART
+
+          cat > android/app/src/main/kotlin/com/codeclipboard/code_clipboard/MainActivity.kt <<'KOTLIN'
+          package com.codeclipboard.code_clipboard
+
+          import android.content.Intent
+          import android.provider.Settings
+          import android.view.inputmethod.InputMethodManager
+          import io.flutter.embedding.android.FlutterActivity
+          import io.flutter.embedding.engine.FlutterEngine
+          import io.flutter.plugin.common.MethodChannel
+
+          class MainActivity : FlutterActivity() {
+              override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+                  super.configureFlutterEngine(flutterEngine)
+                  MethodChannel(flutterEngine.dartExecutor.binaryMessenger,
+                      "code_clipboard/system").setMethodCallHandler { call, result ->
+                      when (call.method) {
+                          "openImeSettings" -> {
+                              startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                              result.success(true)
+                          }
+                          "showImePicker" -> {
+                              (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                                  .showInputMethodPicker()
+                              result.success(true)
+                          }
+                          else -> result.notImplemented()
+                      }
+                  }
+              }
+          }
+          KOTLIN
+
+          mkdir -p android/app/src/main/res/xml
+          cat > android/app/src/main/res/xml/method.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <input-method xmlns:android="http://schemas.android.com/apk/res/android"
+              android:supportsSwitchingToNextInputMethod="true"
+              android:isDefault="false" />
+          XML
+
+          cat > android/app/src/main/kotlin/com/codeclipboard/code_clipboard/CodeClipboardImeService.kt <<'KOTLIN'
+          package com.codeclipboard.code_clipboard
+
+          import android.content.ClipboardManager
+          import android.content.Context
+          import android.inputmethodservice.InputMethodService
+          import android.view.Gravity
+          import android.view.View
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.Button
+          import android.widget.HorizontalScrollView
+          import android.widget.LinearLayout
+          import android.widget.TextView
+          import org.json.JSONArray
+
+          class CodeClipboardImeService : InputMethodService() {
+              private val prefs by lazy {
+                  getSharedPreferences("code_clipboard_history", Context.MODE_PRIVATE)
+              }
+              private val clips = mutableListOf<String>()
+              private var historyView: LinearLayout? = null
+
+              override fun onCreate() {
+                  super.onCreate()
+                  loadHistory()
+              }
+
+              override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+                  super.onStartInputView(info, restarting)
+                  captureCurrentClipboard()
+                  renderHistory()
+              }
+
+              override fun onCreateInputView(): View {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(8, 8, 8, 8)
+                      setBackgroundColor(0xFF101827.toInt())
+                  }
+                  val actions = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  actions.addView(actionButton("تحديد الكل") {
+                      currentInputConnection?.performContextMenuAction(android.R.id.selectAll)
+                  }, weightParams())
+                  actions.addView(actionButton("نسخ") {
+                      currentInputConnection?.performContextMenuAction(android.R.id.copy)
+                  }, weightParams())
+                  actions.addView(actionButton("حذف") {
+                      currentInputConnection?.performContextMenuAction(android.R.id.cut)
+                  }, weightParams())
+                  actions.addView(actionButton("ABC") {
+                      (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                          .switchToNextInputMethod(window?.window?.windowToken, false)
+                  }, weightParams())
+                  root.addView(actions)
+
+                  root.addView(TextView(this).apply {
+                      text = "المقاطع المنسوخة — اضغط للصق"
+                      textSize = 12f
+                      setTextColor(0xFF9FB3CC.toInt())
+                      setPadding(6, 10, 6, 6)
+                  })
+                  val scroll = HorizontalScrollView(this)
+                  historyView = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  scroll.addView(historyView)
+                  root.addView(scroll)
+                  renderHistory()
+                  return root
+              }
+
+              private fun actionButton(label: String, action: () -> Unit) =
+                  Button(this).apply {
+                      text = label
+                      textSize = 11f
+                      isAllCaps = false
+                      setOnClickListener { action() }
+                  }
+
+              private fun weightParams() =
+                  LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+              private fun loadHistory() {
+                  clips.clear()
+                  try {
+                      val arr = JSONArray(prefs.getString("items", "[]"))
+                      for (i in 0 until arr.length()) clips.add(arr.getString(i))
+                  } catch (_: Exception) { }
+              }
+
+              private fun saveHistory() {
+                  val arr = JSONArray()
+                  clips.forEach { arr.put(it) }
+                  prefs.edit().putString("items", arr.toString()).apply()
+              }
+
+              private fun captureCurrentClipboard() {
+                  val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                  val value = try {
+                      if (cm.hasPrimaryClip()) cm.primaryClip?.getItemAt(0)
+                          ?.coerceToText(this)?.toString() else null
+                  } catch (_: Exception) { null }
+                  if (!value.isNullOrBlank() && clips.firstOrNull() != value) {
+                      clips.remove(value)
+                      clips.add(0, value)
+                      saveHistory()
+                  }
+              }
+
+              private fun renderHistory() {
+                  val row = historyView ?: return
+                  row.removeAllViews()
+                  if (clips.isEmpty()) {
+                      row.addView(TextView(this).apply {
+                          text = "انسخ نصاً ثم افتح اللوحة"
+                          setTextColor(0xFFB7C6D8.toInt())
+                          setPadding(8, 8, 8, 8)
+                      })
+                      return
+                  }
+                  clips.forEachIndexed { index, clip ->
+                      row.addView(Button(this).apply {
+                          text = "${index + 1}. ${clip.replace('\n', ' ').take(38)}"
+                          textSize = 11f
+                          isAllCaps = false
+                          setOnClickListener { currentInputConnection?.commitText(clip, 1) }
+                      })
+                  }
+              }
+          }
+          KOTLIN
+
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          data = manifest.read_text()
+          service = '''
+                  <service
+                      android:name=".CodeClipboardImeService"
+                      android:label="CODE CLIPBOARD"
+                      android:permission="android.permission.BIND_INPUT_METHOD"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.view.InputMethod" />
+                      </intent-filter>
+                      <meta-data android:name="android.view.im"
+                          android:resource="@xml/method" />
+                  </service>
+          '''
+          data = data.replace("</application>", service + "\\n    </application>")
+          manifest.write_text(data)
+          PY
+
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CODE-CLIPBOARD-APK
+          path: code_clipboard/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
