@@ -298,7 +298,7 @@ jobs:
                   } catch (_: Exception) { }
               }
 
-              private fun saveHistory() {
+              // Store the complete clipboard text without line truncation; long code (including 5,000+ lines) is kept intact.\n              private fun saveHistory() {
                   val array = JSONArray()
                   clips.forEach { item ->
                       array.put(JSONObject().put("text", item.text).put("copiedAt", item.copiedAt))
@@ -360,6 +360,17 @@ jobs:
                           setOnClickListener {
                               currentInputConnection?.commitText(item.text, 1)
                           }
+                          setOnLongClickListener {
+                              clips.removeAt(index)
+                              saveHistory()
+                              renderHistory()
+                              android.widget.Toast.makeText(
+                                  this@CodeClipboardImeService,
+                                  "تم حذف المقطع",
+                                  android.widget.Toast.LENGTH_SHORT
+                              ).show()
+                              true
+                          }
                       }
 
                       val preview = TextView(this).apply {
@@ -386,6 +397,45 @@ jobs:
               }
           }
           KOTLIN
+
+          # Set the launcher name and create a black-and-royal-red trophy icon.
+          mkdir -p android/app/src/main/res/drawable
+          mkdir -p android/app/src/main/res/mipmap-anydpi-v26
+          cat > android/app/src/main/res/drawable/ic_launcher_foreground.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#000000" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#8B0000" android:pathData="M42,13h24v7h-24z"/>
+              <path android:fillColor="#D10A19" android:pathData="M38,20h32l-4,39c-1,10 -7,16 -12,16s-11,-6 -12,-16z"/>
+              <path android:fillColor="#FF3344" android:pathData="M43,25h5l-3,28h-4z"/>
+              <path android:fillColor="#A00010" android:pathData="M38,24h-9v10c0,13 8,19 17,19v-7c-6,-1 -9,-5 -9,-12zM70,24h9v10c0,13 -8,19 -17,19v-7c6,-1 9,-5 9,-12z"/>
+              <path android:fillColor="#D10A19" android:pathData="M48,75h12v10h-12zM38,85h32v6h-32zM32,92h44v5h-44z"/>
+              <path android:fillColor="#F5C542" android:pathData="M48,12l6,-9 6,9z"/>
+              <path android:fillColor="#F5C542" android:pathData="M54,3l-3,5h6z"/>
+              <path android:fillColor="#FF3344" android:pathData="M26,30l-9,-7 2,15zM82,30l9,-7 -2,15z"/>
+          </vector>
+          XML
+          cat > android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+              <background android:drawable="@android:color/black" />
+              <foreground android:drawable="@drawable/ic_launcher_foreground" />
+          </adaptive-icon>
+          XML
+          cp android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+
+          python3 - <<'PY'
+          from pathlib import Path
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+          data = manifest.read_text()
+          data = data.replace('android:label="code_clipboard"', 'android:label="حافظة الجيسي"')
+          data = data.replace('android:label="Code Clipboard"', 'android:label="حافظة الجيسي"')
+          manifest.write_text(data)
+          PY
 
           python3 - <<'PY'
           from pathlib import Path
