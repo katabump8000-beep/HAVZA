@@ -152,29 +152,42 @@ jobs:
 
           import android.content.ClipboardManager
           import android.content.Context
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
           import android.inputmethodservice.InputMethodService
           import android.view.Gravity
           import android.view.View
+          import android.view.ViewGroup
           import android.view.inputmethod.InputMethodManager
           import android.widget.Button
           import android.widget.HorizontalScrollView
           import android.widget.LinearLayout
           import android.widget.TextView
           import org.json.JSONArray
+          import org.json.JSONObject
+
+          data class ClipItem(val text: String, val copiedAt: Long)
 
           class CodeClipboardImeService : InputMethodService() {
               private val prefs by lazy {
                   getSharedPreferences("code_clipboard_history", Context.MODE_PRIVATE)
               }
-              private val clips = mutableListOf<String>()
+              private val clips = mutableListOf<ClipItem>()
               private var historyView: LinearLayout? = null
+
+              private fun dp(value: Int): Int =
+                  (value * resources.displayMetrics.density).toInt()
 
               override fun onCreate() {
                   super.onCreate()
                   loadHistory()
               }
 
-              override fun onStartInputView(info: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
+              override fun onStartInputView(
+                  info: android.view.inputmethod.EditorInfo?,
+                  restarting: Boolean
+              ) {
                   super.onStartInputView(info, restarting)
                   captureCurrentClipboard()
                   renderHistory()
@@ -183,101 +196,192 @@ jobs:
               override fun onCreateInputView(): View {
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
-                      setPadding(8, 8, 8, 8)
-                      setBackgroundColor(0xFF101827.toInt())
+                      setPadding(dp(10), dp(9), dp(10), dp(10))
+                      minimumHeight = dp(245)
+                      setBackgroundColor(Color.rgb(12, 18, 29))
                   }
-                  val actions = LinearLayout(this).apply {
-                      orientation = LinearLayout.HORIZONTAL
+
+                  val heading = TextView(this).apply {
+                      text = "CODE CLIPBOARD  •  سجل الحافظة"
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setTextColor(Color.rgb(230, 238, 250))
                       gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(5), dp(2), dp(5), dp(9))
                   }
-                  actions.addView(actionButton("تحديد الكل") {
+                  root.addView(heading)
+
+                  val firstRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                  }
+                  firstRow.addView(actionButton("تحديد الكل") {
                       currentInputConnection?.performContextMenuAction(android.R.id.selectAll)
-                  }, weightParams())
-                  actions.addView(actionButton("نسخ") {
+                  }, actionParams())
+                  firstRow.addView(actionButton("نسخ") {
                       currentInputConnection?.performContextMenuAction(android.R.id.copy)
-                  }, weightParams())
-                  actions.addView(actionButton("حذف") {
+                  }, actionParams())
+                  root.addView(firstRow)
+
+                  val secondRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                  }
+                  secondRow.addView(actionButton("حذف المحدد") {
                       currentInputConnection?.performContextMenuAction(android.R.id.cut)
-                  }, weightParams())
-                  actions.addView(actionButton("ABC") {
+                  }, actionParams())
+                  secondRow.addView(actionButton("تبديل الكيبورد") {
                       (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
                           .showInputMethodPicker()
-                  }, weightParams())
-                  root.addView(actions)
+                  }, actionParams())
+                  root.addView(secondRow)
 
-                  root.addView(TextView(this).apply {
-                      text = "المقاطع المنسوخة — اضغط للصق"
+                  val sectionTitle = TextView(this).apply {
+                      text = "آخر المقاطع المنسوخة  —  اضغط على مقطع للصقه"
                       textSize = 12f
-                      setTextColor(0xFF9FB3CC.toInt())
-                      setPadding(6, 10, 6, 6)
-                  })
-                  val scroll = HorizontalScrollView(this)
+                      typeface = Typeface.DEFAULT_BOLD
+                      setTextColor(Color.rgb(151, 177, 210))
+                      setPadding(dp(5), dp(11), dp(5), dp(7))
+                  }
+                  root.addView(sectionTitle)
+
+                  val scroll = HorizontalScrollView(this).apply {
+                      isHorizontalScrollBarEnabled = false
+                  }
                   historyView = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
                   }
                   scroll.addView(historyView)
-                  root.addView(scroll)
-                  renderHistory()
+                  root.addView(scroll, LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT, dp(100)
+                  ))
+
                   return root
+              }
+
+              private fun actionParams() = LinearLayout.LayoutParams(
+                  0, dp(48), 1f
+              ).apply {
+                  setMargins(dp(3), dp(3), dp(3), dp(3))
               }
 
               private fun actionButton(label: String, action: () -> Unit) =
                   Button(this).apply {
                       text = label
-                      textSize = 11f
+                      textSize = 14f
                       isAllCaps = false
+                      minHeight = dp(48)
+                      setTextColor(Color.WHITE)
+                      setPadding(dp(8), 0, dp(8), 0)
+                      background = GradientDrawable().apply {
+                          setColor(Color.rgb(39, 58, 83))
+                          cornerRadius = dp(12).toFloat()
+                      }
                       setOnClickListener { action() }
                   }
 
-              private fun weightParams() =
-                  LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-
               private fun loadHistory() {
                   clips.clear()
+                  val raw = prefs.getString("items", "[]") ?: "[]"
                   try {
-                      val arr = JSONArray(prefs.getString("items", "[]"))
-                      for (i in 0 until arr.length()) clips.add(arr.getString(i))
+                      val array = JSONArray(raw)
+                      for (i in 0 until array.length()) {
+                          val value = array.get(i)
+                          if (value is JSONObject) {
+                              val text = value.optString("text", "")
+                              val time = value.optLong("copiedAt", System.currentTimeMillis())
+                              if (text.isNotBlank()) clips.add(ClipItem(text, time))
+                          } else if (value is String && value.isNotBlank()) {
+                              // Compatibility with entries saved by the first app version.
+                              clips.add(ClipItem(value, System.currentTimeMillis()))
+                          }
+                      }
                   } catch (_: Exception) { }
               }
 
               private fun saveHistory() {
-                  val arr = JSONArray()
-                  clips.forEach { arr.put(it) }
-                  prefs.edit().putString("items", arr.toString()).apply()
+                  val array = JSONArray()
+                  clips.forEach { item ->
+                      array.put(JSONObject().put("text", item.text).put("copiedAt", item.copiedAt))
+                  }
+                  prefs.edit().putString("items", array.toString()).apply()
               }
 
               private fun captureCurrentClipboard() {
-                  val cm = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+                  val manager = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
                   val value = try {
-                      if (cm.hasPrimaryClip()) cm.primaryClip?.getItemAt(0)
-                          ?.coerceToText(this)?.toString() else null
+                      if (manager.hasPrimaryClip()) {
+                          manager.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+                      } else null
                   } catch (_: Exception) { null }
-                  if (!value.isNullOrBlank() && clips.firstOrNull() != value) {
-                      clips.remove(value)
-                      clips.add(0, value)
+
+                  if (!value.isNullOrBlank() && clips.firstOrNull()?.text != value) {
+                      clips.removeAll { it.text == value }
+                      clips.add(0, ClipItem(value, System.currentTimeMillis()))
                       saveHistory()
+                  }
+              }
+
+              private fun elapsed(timestamp: Long): String {
+                  val seconds = ((System.currentTimeMillis() - timestamp).coerceAtLeast(0L) / 1000L)
+                  return when {
+                      seconds < 60 -> "منذ ${seconds} ثانية"
+                      seconds < 3600 -> "منذ ${seconds / 60} دقيقة"
+                      seconds < 86400 -> "منذ ${seconds / 3600} ساعة"
+                      else -> "منذ ${seconds / 86400} يوم"
                   }
               }
 
               private fun renderHistory() {
                   val row = historyView ?: return
                   row.removeAllViews()
+
                   if (clips.isEmpty()) {
                       row.addView(TextView(this).apply {
-                          text = "انسخ نصاً ثم افتح اللوحة"
-                          setTextColor(0xFFB7C6D8.toInt())
-                          setPadding(8, 8, 8, 8)
+                          text = "لا توجد مقاطع بعد — انسخ نصاً ثم افتح الحافظة"
+                          textSize = 13f
+                          setTextColor(Color.LTGRAY)
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(dp(10), 0, dp(10), 0)
                       })
                       return
                   }
-                  clips.forEachIndexed { index, clip ->
-                      row.addView(Button(this).apply {
-                          text = "${index + 1}. ${clip.replace('\n', ' ').take(38)}"
-                          textSize = 11f
-                          isAllCaps = false
-                          setOnClickListener { currentInputConnection?.commitText(clip, 1) }
-                      })
+
+                  clips.forEachIndexed { index, item ->
+                      val card = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          setPadding(dp(12), dp(8), dp(12), dp(8))
+                          background = GradientDrawable().apply {
+                              setColor(Color.rgb(27, 39, 57))
+                              cornerRadius = dp(13).toFloat()
+                              setStroke(dp(1), Color.rgb(57, 79, 108))
+                          }
+                          isClickable = true
+                          isFocusable = true
+                          setOnClickListener {
+                              currentInputConnection?.commitText(item.text, 1)
+                          }
+                      }
+
+                      val preview = TextView(this).apply {
+                          text = "${index + 1}. ${item.text.replace('\n', ' ').replace('\r', ' ').take(34)}"
+                          textSize = 13f
+                          typeface = Typeface.MONOSPACE
+                          setTextColor(Color.rgb(240, 245, 252))
+                          maxLines = 2
+                      }
+                      val time = TextView(this).apply {
+                          text = elapsed(item.copiedAt)
+                          textSize = 12f
+                          setTextColor(Color.rgb(91, 190, 255))
+                          setPadding(0, dp(5), 0, 0)
+                      }
+
+                      card.addView(preview)
+                      card.addView(time)
+                      val params = LinearLayout.LayoutParams(dp(245), dp(88)).apply {
+                          setMargins(dp(3), dp(2), dp(7), dp(2))
+                      }
+                      row.addView(card, params)
                   }
               }
           }
